@@ -92,21 +92,28 @@ function resetDailyStatsIfNeeded() {
 }
 
 // ── Nodemailer Transporter ──────────────────────────────────
-// When EMAIL_SERVICE is set (e.g. "gmail"), nodemailer uses its built-in
-// settings and ignores host/port. Leave EMAIL_SERVICE empty to use
-// host/port/secure directly (required for Resend, Brevo, etc.)
+// Force explicit settings for non-standard services like Brevo/Resend
 const transportConfig = {
-  host: process.env.EMAIL_HOST || "smtp.resend.com",
-  port: parseInt(process.env.EMAIL_PORT || "465"),
-  secure: process.env.EMAIL_SECURE !== "false",
+  host: process.env.EMAIL_HOST,
+  port: parseInt(process.env.EMAIL_PORT),
+  secure: process.env.EMAIL_SECURE === "true", // strict check
   auth: {
-    user: process.env.EMAIL_USER || "resend",
+    user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+  // Add these timeouts to fail fast and debug
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 10000,
 };
+
+// Only use service if explicitly provided (e.g. "gmail")
 if (process.env.EMAIL_SERVICE) {
   transportConfig.service = process.env.EMAIL_SERVICE;
+} else {
+  console.log(`[SMTP] Config: ${transportConfig.host}:${transportConfig.port} (secure: ${transportConfig.secure})`);
 }
+
 const transporter = nodemailer.createTransport(transportConfig);
 
 transporter
