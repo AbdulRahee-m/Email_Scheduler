@@ -108,16 +108,15 @@ transporter
   .then(() => console.log("[SMTP] Connection verified"))
   .catch((err) => console.error("[SMTP] Connection failed:", err.message));
 
-// ── Ollama / Groq AI Content Generator ───────────────────────
-// In production (cloud), set GROQ_API_KEY for free llama3 via Groq.
-// In local dev, falls back to Ollama HTTP API on localhost:11434.
-// If neither is available, uses a simple template.
+// ── Groq AI Content Generator ────────────────────────────────
+// Uses Groq's free cloud API for llama3. Set GROQ_API_KEY env variable.
+// Falls back to a simple template if no API key is set.
 
 async function generateEmailContent(senderName, recipientName, topic) {
   const systemPrompt = "You are a professional email writer. Write concise, well-structured emails with no emojis, no template variables, and no placeholders. Output only the email body text.";
   const userPrompt = `Write a professional email about: ${topic}. From ${senderName} to ${recipientName}. Include a greeting, clear body paragraphs, and a sign-off with the sender name.`;
 
-  // 1) Try Groq (free cloud API)
+  // Try Groq (free cloud API — https://console.groq.com)
   if (process.env.GROQ_API_KEY) {
     try {
       console.log("[AI] Generating via Groq...");
@@ -150,33 +149,11 @@ async function generateEmailContent(senderName, recipientName, topic) {
     } catch (err) {
       console.warn("[AI] Groq unavailable:", err.message);
     }
+  } else {
+    console.warn("[AI] No GROQ_API_KEY set — using fallback template");
   }
 
-  // 2) Try local Ollama HTTP API
-  try {
-    console.log("[AI] Generating via Ollama...");
-    const res = await fetch("http://localhost:11434/api/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "llama3",
-        prompt: `${systemPrompt}\n\n${userPrompt}`,
-        stream: false,
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.response?.trim()) {
-        console.log("[AI] Ollama body generated");
-        return data.response.trim();
-      }
-    }
-  } catch (err) {
-    console.warn("[AI] Ollama unavailable:", err.message);
-  }
-
-  // 3) Fallback template
+  // Fallback template
   console.log("[AI] Using fallback template");
   return `Dear ${recipientName},\n\nI am writing to you regarding ${topic}.\n\nPlease do not hesitate to reach out if you have any questions or require further information.\n\nBest regards,\n${senderName}`;
 }
