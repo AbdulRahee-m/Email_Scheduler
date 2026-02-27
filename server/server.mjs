@@ -92,16 +92,22 @@ function resetDailyStatsIfNeeded() {
 }
 
 // ── Nodemailer Transporter ──────────────────────────────────
-const transporter = nodemailer.createTransport({
-  service: process.env.EMAIL_SERVICE || "gmail",
-  host: process.env.EMAIL_HOST || "smtp.gmail.com",
+// When EMAIL_SERVICE is set (e.g. "gmail"), nodemailer uses its built-in
+// settings and ignores host/port. Leave EMAIL_SERVICE empty to use
+// host/port/secure directly (required for Resend, Brevo, etc.)
+const transportConfig = {
+  host: process.env.EMAIL_HOST || "smtp.resend.com",
   port: parseInt(process.env.EMAIL_PORT || "465"),
   secure: process.env.EMAIL_SECURE !== "false",
   auth: {
-    user: process.env.EMAIL_USER,
+    user: process.env.EMAIL_USER || "resend",
     pass: process.env.EMAIL_PASS,
   },
-});
+};
+if (process.env.EMAIL_SERVICE) {
+  transportConfig.service = process.env.EMAIL_SERVICE;
+}
+const transporter = nodemailer.createTransport(transportConfig);
 
 transporter
   .verify()
@@ -177,7 +183,7 @@ async function sendEmail(data) {
   console.log(`[Email] Sending to ${recipientEmail} | subject: "${finalSubject}"`);
 
   const info = await transporter.sendMail({
-    from: `"${senderName}" <${process.env.EMAIL_USER}>`,
+    from: `"${senderName}" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
     replyTo: senderEmail,
     to: recipientEmail,
     subject: finalSubject,
