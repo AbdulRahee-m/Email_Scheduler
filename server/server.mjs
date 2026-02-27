@@ -33,11 +33,8 @@ const allowedOrigins = [
 app.use(
   cors({
     origin(origin, cb) {
-      // allow server-to-server (no origin) and same-origin requests
       if (!origin) return cb(null, true);
-      // allow listed origins
       if (allowedOrigins.includes(origin)) return cb(null, true);
-      // allow Railway domains automatically
       if (origin.endsWith(".up.railway.app")) return cb(null, true);
       cb(new Error("Not allowed by CORS"));
     },
@@ -91,45 +88,56 @@ function resetDailyStatsIfNeeded() {
   }
 }
 
-// ── Nodemailer Transporter ──────────────────────────────────
-// Force explicit settings for non-standard services like Brevo/Resend
-const transportConfig = {
-  host: process.env.EMAIL_HOST,
-  port: parseInt(process.env.EMAIL_PORT),
-  secure: process.env.EMAIL_SECURE === "true", // strict check
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  // Add these timeouts to fail fast and debug
-  connectionTimeout: 10000,
-  greetingTimeout: 10000,
-  socketTimeout: 10000,
-};
+// ── Gmail SMTP Transporter ──────────────────────────────────
+// Requires a Google App Password — NOT your regular Gmail password.
+// Steps to get one:
+//   1. Go to https://myaccount.google.com/security
+//   2. Enable 2-Step Verification (required)
+//   3. Go to https://myaccount.google.com/apppasswords
+//   4. Create an App Password → select "Mail" + "Other (custom name)"
+//   5. Copy the 16-char password → set as GMAIL_APP_PASSWORD in Railway
+//
+// Railway env vars to set:
+//   GMAIL_USER         →  your.email@gmail.com
+//   GMAIL_APP_PASSWORD →  xxxx xxxx xxxx xxxx  (16-char app password)
 
-// Only use service if explicitly provided (e.g. "gmail")
-if (process.env.EMAIL_SERVICE) {
-  transportConfig.service = process.env.EMAIL_SERVICE;
+const GMAIL_USER = process.env.GMAIL_USER;
+const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
+
+if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
+  console.error("[SMTP] ❌ Missing GMAIL_USER or GMAIL_APP_PASSWORD environment variables!");
+  console.error("[SMTP]    Set these in Railway → Variables tab.");
 } else {
-  console.log(`[SMTP] Config: ${transportConfig.host}:${transportConfig.port} (secure: ${transportConfig.secure})`);
+  console.log(`[SMTP] Gmail configured for: ${GMAIL_USER}`);
 }
 
-const transporter = nodemailer.createTransport(transportConfig);
+const transporter = nodemailer.createTransport({
+  service: "gmail",           // uses Gmail's built-in settings (smtp.gmail.com:587 TLS)
+  auth: {
+    user: GMAIL_USER,
+    pass: GMAIL_APP_PASSWORD, // App Password, NOT your Gmail login password
+  },
+  connectionTimeout: 10_000,
+  greetingTimeout: 10_000,
+  socketTimeout: 10_000,
+});
 
 transporter
   .verify()
-  .then(() => console.log("[SMTP] Connection verified"))
-  .catch((err) => console.error("[SMTP] Connection failed:", err.message));
+  .then(() => console.log("[SMTP] ✅ Gmail connection verified — ready to send"))
+  .catch((err) => {
+    console.error("[SMTP] ❌ Gmail connection failed:", err.message);
+    console.error("[SMTP]    Common causes:");
+    console.error("[SMTP]    • Wrong App Password (must be 16 chars, no spaces)");
+    console.error("[SMTP]    • 2-Step Verification not enabled on the Google account");
+    console.error("[SMTP]    • GMAIL_USER is not the correct Gmail address");
+  });
 
 // ── Groq AI Content Generator ────────────────────────────────
-// Uses Groq's free cloud API for llama3. Set GROQ_API_KEY env variable.
-// Falls back to a simple template if no API key is set.
-
 async function generateEmailContent(senderName, recipientName, topic) {
   const systemPrompt = "You are a professional email writer. Write concise, well-structured emails with no emojis, no template variables, and no placeholders. Output only the email body text.";
   const userPrompt = `Write a professional email about: ${topic}. From ${senderName} to ${recipientName}. Include a greeting, clear body paragraphs, and a sign-off with the sender name.`;
 
-  // Try Groq (free cloud API — https://console.groq.com)
   if (process.env.GROQ_API_KEY) {
     try {
       console.log("[AI] Generating via Groq...");
@@ -166,8 +174,6 @@ async function generateEmailContent(senderName, recipientName, topic) {
     console.warn("[AI] No GROQ_API_KEY set — using fallback template");
   }
 
-  // Fallback template
-  console.log("[AI] Using fallback template");
   return `Dear ${recipientName},\n\nI am writing to you regarding ${topic}.\n\nPlease do not hesitate to reach out if you have any questions or require further information.\n\nBest regards,\n${senderName}`;
 }
 
@@ -175,13 +181,9 @@ async function generateEmailContent(senderName, recipientName, topic) {
 async function sendEmail(data) {
   const { senderName, senderEmail, recipientName, recipientEmail, topic } = data;
 
-  // Subject is always FULL UPPERCASE, no emojis
   const finalSubject = topic.toUpperCase().replace(/[\u{1F600}-\u{1F6FF}\u{2600}-\u{27BF}\u{1F900}-\u{1F9FF}]/gu, "").trim();
-
-  // Generate complete email body from topic via AI
   const emailBody = await generateEmailContent(senderName, recipientName, topic);
 
-  // Convert newlines to HTML paragraphs
   const htmlBody = emailBody
     .split(/\n\n+/)
     .map((p) => `<p style="color:#374151;line-height:1.7;margin:0 0 14px 0;font-size:15px;">${p.replace(/\n/g, "<br/>")}</p>`)
@@ -189,9 +191,11 @@ async function sendEmail(data) {
 
   console.log(`[Email] Sending to ${recipientEmail} | subject: "${finalSubject}"`);
 
+  // Gmail sends FROM your Gmail address.
+  // senderEmail is set as Reply-To so replies go back to the original sender.
   const info = await transporter.sendMail({
-    from: `"${senderName}" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
-    replyTo: senderEmail,
+    from: `"${senderName}" <${GMAIL_USER}>`,  // must be your Gmail address
+    replyTo: senderEmail,                      // replies go to the form's sender email
     to: recipientEmail,
     subject: finalSubject,
     text: emailBody,
@@ -214,11 +218,11 @@ async function sendEmail(data) {
   stats.sentToday++;
   stats.users.add(senderEmail);
 
-  console.log(`[Email] Sent to ${recipientEmail} | messageId: ${info.messageId}`);
+  console.log(`[Email] ✅ Sent to ${recipientEmail} | messageId: ${info.messageId}`);
   return info;
 }
 
-// ── Scheduling (setTimeout, non-blocking, one-shot) ─────────
+// ── Scheduling ───────────────────────────────────────────────
 function scheduleEmailJob(emailData, scheduledAt) {
   const target = new Date(scheduledAt).getTime();
   const delay = target - Date.now();
@@ -283,10 +287,9 @@ function validateEmailData(d) {
 }
 
 // ═════════════════════════════════════════════════════════════
-//  API  Routes
+//  API Routes
 // ═════════════════════════════════════════════════════════════
 
-// ── POST /api/send-email — instant send ─────────────────────
 app.post("/api/send-email", async (req, res) => {
   console.log("[API] POST /api/send-email");
   const errors = validateEmailData(req.body);
@@ -294,7 +297,6 @@ app.post("/api/send-email", async (req, res) => {
     console.warn("[API] Validation failed:", errors);
     return res.status(400).json({ success: false, errors });
   }
-
   try {
     const info = await sendEmail(req.body);
     res.json({ success: true, messageId: info.messageId });
@@ -304,7 +306,6 @@ app.post("/api/send-email", async (req, res) => {
   }
 });
 
-// ── POST /api/schedule-emails — batch schedule ──────────────
 app.post("/api/schedule-emails", (req, res) => {
   console.log("[API] POST /api/schedule-emails");
   const { emails } = req.body;
@@ -334,14 +335,9 @@ app.post("/api/schedule-emails", (req, res) => {
     }
   }
 
-  res.json({
-    success: errors.length === 0,
-    scheduled: results,
-    errors,
-  });
+  res.json({ success: errors.length === 0, scheduled: results, errors });
 });
 
-// ── GET /api/stats ──────────────────────────────────────────
 app.get("/api/stats", (_req, res) => {
   resetDailyStatsIfNeeded();
   res.json({
@@ -352,7 +348,6 @@ app.get("/api/stats", (_req, res) => {
   });
 });
 
-// ── GET /api/scheduled-emails ───────────────────────────────
 app.get("/api/scheduled-emails", (_req, res) => {
   const list = [];
   for (const e of scheduledEmails.values()) {
@@ -370,16 +365,14 @@ app.get("/api/scheduled-emails", (_req, res) => {
   res.json(list);
 });
 
-// ── GET /api/health ─────────────────────────────────────────
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", uptime: process.uptime() });
 });
 
-// ── SPA catch-all (serves React app for any non-API route) ──
+// ── SPA catch-all ────────────────────────────────────────────
 import fs from "fs";
 const indexPath = path.join(clientDist, "index.html");
 
-// Log dist contents on startup for debugging
 if (fs.existsSync(clientDist)) {
   const walk = (dir, prefix = "") => {
     try {
@@ -396,7 +389,6 @@ if (fs.existsSync(clientDist)) {
 }
 
 app.get("*", (_req, res) => {
-  // Don't serve index.html for static asset requests
   if (/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot|map)$/i.test(_req.path)) {
     return res.status(404).end();
   }
@@ -407,7 +399,7 @@ app.get("*", (_req, res) => {
   }
 });
 
-// ── Start ───────────────────────────────────────────────────
+// ── Start ─────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`[Server] Email Scheduler API running on port ${PORT}`);
   console.log(`[Server] Static files: ${fs.existsSync(clientDist) ? clientDist : "NOT BUILT"}`);
