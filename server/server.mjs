@@ -33,8 +33,12 @@ const allowedOrigins = [
 app.use(
   cors({
     origin(origin, cb) {
-      // allow server-to-server (no origin) and allowed origins
-      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      // allow server-to-server (no origin) and same-origin requests
+      if (!origin) return cb(null, true);
+      // allow listed origins
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      // allow Railway domains automatically
+      if (origin.endsWith(".up.railway.app")) return cb(null, true);
       cb(new Error("Not allowed by CORS"));
     },
     methods: ["GET", "POST"],
@@ -384,7 +388,28 @@ app.get("/api/health", (_req, res) => {
 // ── SPA catch-all (serves React app for any non-API route) ──
 import fs from "fs";
 const indexPath = path.join(clientDist, "index.html");
+
+// Log dist contents on startup for debugging
+if (fs.existsSync(clientDist)) {
+  const walk = (dir, prefix = "") => {
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        const full = path.join(dir, f);
+        if (fs.statSync(full).isDirectory()) walk(full, prefix + f + "/");
+        else console.log(`[Static] ${prefix}${f}`);
+      }
+    } catch {}
+  };
+  walk(clientDist);
+} else {
+  console.warn("[Static] client/dist does NOT exist — frontend not built");
+}
+
 app.get("*", (_req, res) => {
+  // Don't serve index.html for static asset requests
+  if (/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot|map)$/i.test(_req.path)) {
+    return res.status(404).end();
+  }
   if (fs.existsSync(indexPath)) {
     res.sendFile(indexPath);
   } else {

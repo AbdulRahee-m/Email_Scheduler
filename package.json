@@ -6,7 +6,7 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev",
-    "build": "cd server && npm install --production && cd ../client && npm install --include=dev && npm run build",
+    "build": "cd server && npm install --omit=dev && cd ../client && NPM_CONFIG_PRODUCTION=false npm install && npm run build",
     "start": "cd server && node server.mjs",
     "install:all": "cd server && npm install && cd ../client && npm install"
   },
