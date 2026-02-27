@@ -117,9 +117,9 @@ const transporter = nodemailer.createTransport({
     user: GMAIL_USER,
     pass: GMAIL_APP_PASSWORD, // App Password, NOT your Gmail login password
   },
-  connectionTimeout: 10_000,
-  greetingTimeout: 10_000,
-  socketTimeout: 10_000,
+  connectionTimeout: 30_000,  // Increased for Railway network
+  greetingTimeout: 30_000,    // Increased for Railway network
+  socketTimeout: 30_000,      // Increased for Railway network
 });
 
 transporter
